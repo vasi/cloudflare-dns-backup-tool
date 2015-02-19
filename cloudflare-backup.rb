@@ -4,6 +4,7 @@ require 'cloudflare'
 require 'json'
 require 'pathname'
 require 'set'
+require 'open3'
 
 # Get all records, even if > 180 in number
 def records(cf, zone)
@@ -50,9 +51,20 @@ def backup(cf, dir)
   end
 
   # Auto-commit
-  if dir.join('.git').exist?
-    auto_commit = Pathname.new(__FILE__).parent.join('git-auto-commit')
-    system([auto_commit.to_s, dir.to_s])
+  auto_commit(dir) if dir.join('.git').exist?
+end
+
+def auto_commit(dir)
+  Dir.chdir(dir.to_s) do
+    # Add new/changed files
+    added = IO.popen(%w[git ls-files --exclude-standard -o -m -z]) \
+      .each_line("\0").map { |n| n.chomp("\0") }
+    system('git', 'add', *added) unless added.empty?
+
+    unless system(*%w[git diff --cached --quiet])
+      system(*%w[git commit --quiet -am], "Autocommit at " + Time.now.to_s)
+      system(*%w[git push --quiet])
+    end
   end
 end
 
