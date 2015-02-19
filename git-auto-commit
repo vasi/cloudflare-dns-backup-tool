@@ -1,0 +1,13 @@
+#!/bin/sh
+
+dir="$1"
+cd "$dir"
+
+# Add new or changed files
+git ls-files --exclude-standard -o -m -z | xargs -0r git add
+
+# Commit changes, if any
+if ! git diff --cached --quiet; then
+  git commit --quiet -am "Autocommit at $(date)"
+  git push --quiet
+fi

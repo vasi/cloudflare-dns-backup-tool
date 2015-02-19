@@ -42,11 +42,20 @@ def backup(cf, dir)
   # Remove old files
   dir.find do |file|
     next if dir == file
+    if file.basename.to_s == '.git'
+      Find.prune
+      next
+    end
     file.unlink unless written.include? file
+  end
+
+  # Auto-commit
+  if dir.join('.git').exist?
+    auto_commit = Pathname.new(__FILE__).parent.join('git-auto-commit')
+    system([auto_commit.to_s, dir.to_s])
   end
 end
 
-
-email, token = ARGV
+email, token, dir = ARGV
 cf = CloudFlare::connection(token, email)
-backup(cf, 'backup')
+backup(cf, dir)
