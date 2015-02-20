@@ -5,6 +5,7 @@ require 'json'
 require 'pathname'
 require 'set'
 require 'open3'
+require 'tempfile'
 
 # Get all records, even if > 180 in number
 def records(cf, zone)
@@ -24,7 +25,7 @@ def write_json(dir, filename, obj)
   return path
 end
 
-def backup(cf, dir)
+def backup(cf, dir, key)
   # Fetch everything
   zones = cf.zone_load_multi
   recs = {}
@@ -51,23 +52,40 @@ def backup(cf, dir)
   end
 
   # Auto-commit
-  auto_commit(dir) if dir.join('.git').exist?
+  auto_commit(dir, key) if dir.join('.git').exist?
 end
 
-def auto_commit(dir)
-  Dir.chdir(dir.to_s) do
-    # Add new/changed files
-    added = IO.popen(%w[git ls-files --exclude-standard -o -m -z]) \
-      .each_line("\0").map { |n| n.chomp("\0") }
-    system('git', 'add', *added) unless added.empty?
+def auto_commit(dir, key)
+  # Setup GIT_SSH appropriately
+  old_ssh = ENV['GIT_SSH']
+  ssh_wrapper = Tempfile.new('git-ssh', :mode => 0700)
+  ssh_wrapper.chmod(0700)
+  ssh_wrapper.puts(<<-EOF)
+#!/bin/sh
+exec ssh -i #{key.realpath.to_s} "$@"
+EOF
+  ssh_wrapper.close
+  ENV['GIT_SSH'] = ssh_wrapper.path
 
-    unless system(*%w[git diff --cached --quiet])
-      system(*%w[git commit --quiet -am], "Autocommit at " + Time.now.to_s)
-      system(*%w[git push --quiet])
+  begin
+    Dir.chdir(dir.to_s) do
+      # Add new/changed files
+      added = IO.popen(%w[git ls-files --exclude-standard -o -m -z]) \
+        .each_line("\0").map { |n| n.chomp("\0") }
+      system('git', 'add', *added) unless added.empty?
+
+      unless system(*%w[git diff --cached --quiet])
+        system(*%w[git commit --quiet -am], "Autocommit at " + Time.now.to_s)
+        system(*%w[git push --quiet])
+      end
     end
+  ensure
+    ENV['GIT_SSH'] = old_ssh
+    ssh_wrapper.unlink
   end
 end
 
 email, token, dir = ARGV
 cf = CloudFlare::connection(token, email)
-backup(cf, dir)
+key = Pathname.new(__FILE__).parent.join('id_rsa')
+backup(cf, dir, key)
